@@ -6,56 +6,85 @@ library(ggmap)
 
 d <- st_read('~/Documents/GitHub/safewalk/Crime_Incidents_in_2022.geojson')
 d <- subset(d, OFFENSE %in% c('ASSAULT W/DANGEROUS WEAPON','HOMICIDE','ROBBERY','SEX ABUSE'))
-l <- st_read('~/Documents/GitHub/safewalk/Street_Lights.geojson')
 
-# l_d_100m <- st_is_within_distance(st_transform(l$geometry,3857),st_transform(d$geometry,3857),100,sparse=F)
-
-# l_ineff <- apply(l_d_100m,1,any)
-
-u <- "http://0.0.0.0:5000/"
-options(osrm.server = u)
-
-st_layers('~/Documents/GitHub/safewalk/district-of-columbia-latest.osm',do_count=T)
-dc_points <- read_sf('~/Documents/GitHub/safewalk/district-of-columbia-latest.osm',layer='points')
-dc_lines <- read_sf('~/Documents/GitHub/safewalk/district-of-columbia-latest.osm',layer='lines')
-# dc_lines_sidewalk <- subset(dc_lines,grepl('sidewalk',other_tags) & !grepl('\"sidewalk\"=>\"no\"',other_tags))
-dc_crossings <- subset(dc_points,highway=='crossing')
-crossing_bbox <- st_bbox(dc_crossings)
+dc_latest <- read_sf('~/Documents/GitHub/safewalk/dc_foot.osm',layer='lines')
+# dc_intersections <- read_sf('~/Documents/GitHub/safewalk/dc_highway_footway_crossing.osm',layer='points')
+# dc_blocks <- read_sf('~/Documents/GitHub/safewalk/dc_highway_footway_crossing.osm',layer='lines')
+# intersection_bbox <- st_bbox(dc_intersections)
 
 if(0){ # rerun after changing osm file
-  waypoint_nodes <- apply(d, 1, function(d_row){
-    print(d_row)
-    st_nearest_feature(d_row,dc_lines)
-  })
-  dc_lines_crimes <- unique(dc_lines[st_nearest_feature(d,dc_lines),])
-  hist(st_length(st_transform(dc_lines_crimes$geometry,'EPSG:25832')))
+  node_near_crime <- st_is_within_distance(x=d,y=dc_latest,dist=100)
+  table(lengths(node_near_crime))
+  dc_block_crimes <- dc_latest[unlist(node_near_crime),]
+  dc_block_crimes$offense <- rep(d$OFFENSE,lengths(node_near_crime))
+  
   ggplot() +
-    geom_sf(data = dc_lines$geometry,
+    geom_sf(data = dc_latest$geometry,
             inherit.aes = FALSE,
-            color = "lightgrey") +
-    geom_sf(data=dc_lines_crimes$geometry,
-            inherit.aes = FALSE,
-            color = dc_lines_crimes$osm_id) +
-    # scale_discrete_identity(color = dc_lines_crimes$osm_id) + 
-    coord_sf(xlim = crossing_bbox[c(1,3)], 
-             ylim = crossing_bbox[c(2,4)],
+            aes(color = dc_latest$highway)) +
+    coord_sf(xlim = route_no_crime_bbox[c(1,3)], 
+             ylim = route_no_crime_bbox[c(2,4)],
              expand = TRUE) +
     theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
   
-  str(waypoint_nodes)
-  waypoint_nodes <- data.frame(t(matrix(waypoint_nodes,nrow=4)))
-  names(waypoint_nodes) <- c('OBJECTID','node1','node2','OFFENSE')
+  ggplot() +
+    geom_sf(data = dc_latest$geometry,
+            inherit.aes = FALSE,
+            color = "lightgrey") +
+    geom_sf(data=d$geometry[which(lengths(node_near_crime)!=0)],
+            inherit.aes = FALSE,
+            aes(color = d$OFFENSE[which(lengths(node_near_crime)!=0)])) +
+    geom_sf(data=dc_block_crimes$geometry,
+            inherit.aes = FALSE,
+            aes(color = dc_block_crimes$offense)) +
+    # coord_sf(xlim = route_no_crime_bbox[c(1,3)], 
+    #          ylim = route_no_crime_bbox[c(2,4)],
+    #          expand = TRUE) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
   
-  l <- c("HOMICIDE" = 1, "ASSAULT W/DANGEROUS WEAPON" = 2, "ROBBERY" = 3, "SEX ABUSE" = 4)
-  traffic_update <- apply(waypoint_nodes,1,function(node_row){
-    crime_weight <- l[node_row[4]]
-    as.matrix(c(c(node_row[2],node_row[3],0),
-              c(node_row[3],node_row[2],0)))
+  dc_block_crime_intersects_indices <- st_intersects(dc_block_crimes,dc_latest)
+  dc_block_crime_intersects <- dc_latest[unlist(dc_block_crime_intersects_indices),]
+  
+  ggplot() +
+    geom_sf(data = dc_latest$geometry,
+            inherit.aes = FALSE,
+            color = "lightgrey") +
+    geom_sf(data=dc_block_crimes$geometry,
+            inherit.aes = FALSE,
+            linetype = "dashed",
+            aes(color = dc_block_crimes$offense)) +
+    # geom_sf(data=dc_block_crime_intersects$geometry,
+    #         inherit.aes = FALSE,
+    #         linetype = "dotted",
+    #         aes(color = rep(dc_block_crimes$offense,lengths(dc_block_crime_intersects_indices)))) +
+    geom_sf(data=d$geometry,
+            inherit.aes = FALSE,
+            aes(color = d$OFFENSE)) +
+    coord_sf(xlim = route_no_crime_bbox[c(1,3)], 
+             ylim = route_no_crime_bbox[c(2,4)],
+             expand = TRUE) +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+  
+  traffic_update <- lapply(dc_block_crime_intersects_indices,function(crime_indices){
+    if(length(crime_indices)<2){
+      return()
+    }
+    osm_ids <- dc_latest$osm_id[crime_indices]
+    combination <- combn(c(osm_ids,rev(osm_ids)),2)
+    rbind(combination,0)
   })
   
-  traffic_update <- t(matrix(traffic_update,nrow=3))
+  
+  traffic_update <- t(matrix(unlist(traffic_update,recursive = F),nrow=3))
+  
   write.table(traffic_update,'~/Documents/GitHub/safewalk/traffic_update.csv',
               row.names = F, col.names = F,  sep=",", quote = F)
+  
+  slowed_ids <- apply(traffic_update,1,function(traffic_ids){
+    intersect(unlist(st_touches(subset(dc_latest,osm_id==traffic_ids[1]),dc_latest)),
+                            unlist(st_touches(subset(dc_latest,osm_id==traffic_ids[2]),dc_latest)))
+  })
+  slowed_ids <- unlist(slowed_ids)
 }
 
 if(0){
@@ -63,79 +92,82 @@ if(0){
   home_ll <- geocode('2032 belmont rd nw washington dc')
   seylou_ll <- geocode('seylou washington dc')
   
-  route4 <-  osrmRoute(src = seylou_ll, 
+  u <- "http://0.0.0.0:5000/"
+  options(osrm.server = u)
+  
+  route_no_crime <-  osrmRoute(src = seylou_ll, 
                        dst = home_ll,
                        returnclass = "sf",
                        osrm.profile = 'foot')
 }
 
-if(0){
-  route4_bbox <- st_bbox(route4)
-  osm_q <- opq(bbox=route4_bbox)
-  bmap <- osmdata_sf(osm_q)
-}
+route_no_crime_bbox <- st_bbox(route_no_crime)
 
 ggplot() +
-  geom_sf(data = bmap$osm_lines,
+  geom_sf(data = dc_latest$geometry,
           inherit.aes = FALSE,
-          color = "steelblue") +
-  geom_sf(data = route4$geometry,
+          color = "lightgrey") +
+  geom_sf(data = route_no_crime$geometry,
           inherit.aes = FALSE,
-          color = "orange") +
-  geom_sf(data = d$geometry,
+          color = "blue") +
+  geom_sf(data=dc_block_crimes$geometry,
           inherit.aes = FALSE,
-          aes(color=d$OFFENSE)) +
-  coord_sf(xlim = route4_bbox[c(1,3)], 
-           ylim = route4_bbox[c(2,4)],
+          linetype = "dashed",
+          aes(color = dc_block_crimes$offense)) +
+  # geom_sf(data=dc_block_crime_intersects$geometry,
+  #         inherit.aes = FALSE,
+  #         linetype = "dotted",
+  #         aes(color = rep(dc_block_crimes$offense,lengths(dc_block_crime_intersects_indices)))) +
+  geom_sf(data=d$geometry,
+          inherit.aes = FALSE,
+          aes(color = d$OFFENSE)) +
+  coord_sf(xlim = route_no_crime_bbox[c(1,3)], 
+           ylim = route_no_crime_bbox[c(2,4)],
            expand = TRUE) +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 
-
-route4_postcrime <-  osrmRoute(src = seylou_ll, 
+route_post_crime <-  osrmRoute(src = seylou_ll, 
                      dst = home_ll,
                      returnclass = "sf",
                      osrm.profile = 'foot')
 
+route_post_crime_bbox <- st_bbox(route_post_crime)
 
-if(0){
-  route4_postcrime_bbox <- st_bbox(route4_postcrime)
-  osm_postcrime_q <- opq(bbox=route4_postcrime_bbox)
-  bmap_postcrime <- osmdata_sf(osm_postcrime_q)
-}
+route_post_crime == route_no_crime
 
 ggplot() +
-  geom_sf(data = bmap_postcrime$osm_lines,
+  geom_sf(data = dc_latest$geometry,
           inherit.aes = FALSE,
           color = "lightgrey") +
-  geom_sf(data = route4$geometry,
+  geom_sf(data = route_no_crime$geometry,
           inherit.aes = FALSE,
           color = "blue") +
-  geom_sf(data = route4_postcrime$geometry,
+  geom_sf(data = route_post_crime$geometry,
           inherit.aes = FALSE,
           color = "orange") +
-  geom_sf(data = d$geometry,
+  # geom_sf(data=dc_block_crimes$geometry,
+  #         inherit.aes = FALSE,
+  #         linetype = "dashed",
+  #         aes(color = dc_block_crimes$offense)) +
+  geom_sf(data=dc_block_crime_intersects$geometry,
           inherit.aes = FALSE,
-          aes(color=d$OFFENSE)) +
-  coord_sf(xlim = route4_postcrime_bbox[c(1,3)], 
-           ylim = route4_postcrime_bbox[c(2,4)],
+          linetype = "dotted",
+          aes(color = rep(dc_block_crimes$offense,lengths(dc_block_crime_intersects_indices)))) +
+  geom_sf(data=d$geometry,
+          inherit.aes = FALSE,
+          aes(color = d$OFFENSE)) +
+  coord_sf(xlim = route_no_crime_bbox[c(1,3)], 
+           ylim = route_no_crime_bbox[c(2,4)],
            expand = TRUE) +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 
 
+
 ggplot() +
-  geom_sf(data = dc_streets$geometry,
+  geom_sf(data = dc_latest$geometry,
           inherit.aes = FALSE,
           color = "lightgrey") +
-  # geom_sf(data = route4$geometry,
-  #         inherit.aes = FALSE,
-  #         color = "blue") +
-  geom_sf(data = route4_postcrime$geometry,
+  geom_sf(data = subset(dc_latest,osm_id %in% traffic_update,)$geometry,
           inherit.aes = FALSE,
           color = "orange") +
-  geom_sf(data = d$geometry,
-          inherit.aes = FALSE,
-          aes(color=d$OFFENSE)) +
-  coord_sf(xlim = route4_postcrime_bbox[c(1,3)], 
-           ylim = route4_postcrime_bbox[c(2,4)],
-           expand = TRUE) +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
