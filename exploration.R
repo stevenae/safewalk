@@ -15,16 +15,32 @@ l <- st_read('~/Documents/GitHub/safewalk/Street_Lights.geojson')
 u <- "http://0.0.0.0:5000/"
 options(osrm.server = u)
 
-dc_streets <- read_sf('~/Documents/GitHub/safewalk/dc_streets.osm')
+st_layers('~/Documents/GitHub/safewalk/district-of-columbia-latest.osm',do_count=T)
+dc_points <- read_sf('~/Documents/GitHub/safewalk/district-of-columbia-latest.osm',layer='points')
+dc_lines <- read_sf('~/Documents/GitHub/safewalk/district-of-columbia-latest.osm',layer='lines')
+# dc_lines_sidewalk <- subset(dc_lines,grepl('sidewalk',other_tags) & !grepl('\"sidewalk\"=>\"no\"',other_tags))
+dc_crossings <- subset(dc_points,highway=='crossing')
+crossing_bbox <- st_bbox(dc_crossings)
 
 if(0){ # rerun after changing osm file
   waypoint_nodes <- apply(d, 1, function(d_row){
-    lon_lat <- d_row$geometry
-    query_str <- paste0("http://0.0.0.0:5000/nearest/v1/foot/",paste(lon_lat,collapse = ','),"?number=1")
-    cfm <- curl_fetch_memory(query_str)
-    cfm <- fromJSON(rawToChar(cfm$content))
-    return(c(d_row$OBJECTID,cfm$waypoints$nodes[[1]],d_row$OFFENSE))
+    print(d_row)
+    st_nearest_feature(d_row,dc_lines)
   })
+  dc_lines_crimes <- unique(dc_lines[st_nearest_feature(d,dc_lines),])
+  hist(st_length(st_transform(dc_lines_crimes$geometry,'EPSG:25832')))
+  ggplot() +
+    geom_sf(data = dc_lines$geometry,
+            inherit.aes = FALSE,
+            color = "lightgrey") +
+    geom_sf(data=dc_lines_crimes$geometry,
+            inherit.aes = FALSE,
+            color = dc_lines_crimes$osm_id) +
+    # scale_discrete_identity(color = dc_lines_crimes$osm_id) + 
+    coord_sf(xlim = crossing_bbox[c(1,3)], 
+             ylim = crossing_bbox[c(2,4)],
+             expand = TRUE) +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
   
   str(waypoint_nodes)
   waypoint_nodes <- data.frame(t(matrix(waypoint_nodes,nrow=4)))
@@ -110,9 +126,9 @@ ggplot() +
   geom_sf(data = dc_streets$geometry,
           inherit.aes = FALSE,
           color = "lightgrey") +
-  geom_sf(data = route4$geometry,
-          inherit.aes = FALSE,
-          color = "blue") +
+  # geom_sf(data = route4$geometry,
+  #         inherit.aes = FALSE,
+  #         color = "blue") +
   geom_sf(data = route4_postcrime$geometry,
           inherit.aes = FALSE,
           color = "orange") +
