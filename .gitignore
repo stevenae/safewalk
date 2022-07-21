@@ -5,3 +5,4 @@ osmfilter_tempfile*
 traffic_update.csv
 Street_Lights.geojson
 .DS_Store
+traffic_update_lines.csv
