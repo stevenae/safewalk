@@ -6,5 +6,5 @@ docker run -t -v "${PWD}:/data" osrm/osrm-backend osrm-customize /data/district-
 # to service requests
 docker run -t -i -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend osrm-routed --algorithm mld /data/district-of-columbia-latest.osrm
 # for crime updates
-docker run -t -v "${PWD}:/data" osrm/osrm-backend osrm-customize /data/district-of-columbia-latest.osrm --segment-speed-file /data/traffic_update.csv
+docker run -t -v "${PWD}:/data" osrm/osrm-backend osrm-customize /data/district-of-columbia-latest.osrm --segment-speed-file /data/traffic_update_lines.csv
 docker run -t -i -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend osrm-routed --algorithm mld /data/district-of-columbia-latest.osrm

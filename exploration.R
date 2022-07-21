@@ -15,16 +15,49 @@ file_osm <- "~/Documents/GitHub/safewalk/dc_node_overpass.osm"
 # dc_osm <- osmdata_xml(overpass_query_str,file_osm)
 dc_osm <- osmdata_sf(overpass_query_str,file_osm)
 
-dc_latest <- dc_osm$osm_points
+# dc_latest <- dc_osm$osm_points
+dc_latest_lines <- dc_osm$osm_lines
 
-node_near_crime <- st_is_within_distance(x=d,y=dc_latest,100)
-table(lengths(node_near_crime))
-dc_block_crimes <- dc_latest[unlist(node_near_crime),]
+# node_near_crime <- st_is_within_distance(x=d,y=dc_latest,10)
+# table(lengths(node_near_crime))
+# dc_block_crimes <- dc_latest[unlist(node_near_crime),]
 
-dc_block_crime_next_nearest_ids <- st_nearest_feature(dc_block_crimes,dc_latest[-unlist(node_near_crime),])
-dc_block_crime_next_nearest <- dc_latest[-unlist(node_near_crime),][dc_block_crime_next_nearest_ids,]
+line_near_crime <- st_is_within_distance(x=d,y=dc_latest_lines,100)
+table(lengths(line_near_crime))
+dc_block_crimes_lines <- dc_latest_lines[unlist(line_near_crime),]
+dc_block_crimes_lines$crime_ll <- rep(d$geometry,lengths(line_near_crime))
+dc_block_crimes_lines$offense <- rep(d$OFFENSE,lengths(line_near_crime))
+dc_block_crimes_lines_nearby_nodes <- apply(dc_block_crimes_lines,1,function(crime_adjacent_line){
+  points <- st_cast(st_sfc(crime_adjacent_line$geometry),'POINT')
+  dists <- st_distance(crime_adjacent_line$crime_ll,)
+  data.frame('osm_id'=rownames(crime_adjacent_line$geometry),points)[dists<100,]
+})
 
-dc_block_crimes$offense <- rep(d$OFFENSE,lengths(node_near_crime))
+dc_block_crimes_lines_nearby_nodes_traffic <- lapply(dc_block_crimes_lines_nearby_nodes, function(node){
+  node_len <- length(node$osm_id)
+  forward <- cbind(node[-node_len,],node[-1,])
+  backward <- cbind(node[-1,],node[-node_len,])
+  return(rbind(forward,backward))
+})
+dc_block_crimes_lines_nearby_nodes_traffic <- do.call(rbind,dc_block_crimes_lines_nearby_nodes_traffic)
+dc_block_crimes_lines_nearby_nodes_traffic <- aggregate( cnt ~ ., cbind(dc_block_crimes_lines_nearby_nodes_traffic, cnt = 1), function(x){
+  pmax(6-sum(x),0)
+})
+write.table(dc_block_crimes_lines_nearby_nodes_traffic,'~/Documents/GitHub/safewalk/traffic_update_lines.csv',
+            row.names = F, col.names = F,  sep=",", quote = F)
+
+dc_block_crimes_lines_nearby_nodes_plot <- lapply(dc_block_crimes_lines_nearby_nodes, function(node){
+  
+  st_cast(st_combine(node$geometry),'LINESTRING')
+})
+# checking match logic
+# cbind(dc_block_crimes_lines$offense[match(names(dc_block_crimes_lines_nearby_nodes_plot),dc_block_crimes_lines$osm_id)],dc_block_crimes_lines$osm_id[match(names(dc_block_crimes_lines_nearby_nodes_plot),dc_block_crimes_lines$osm_id)],names(dc_block_crimes_lines_nearby_nodes_plot))
+dc_block_crimes_lines_nearby_nodes_plot <- st_sf(data.frame(offense=dc_block_crimes_lines$offense[match(names(dc_block_crimes_lines_nearby_nodes_plot),dc_block_crimes_lines$osm_id)],
+                                                            geometry=do.call(rbind,dc_block_crimes_lines_nearby_nodes_plot)))
+
+# dc_block_crime_next_nearest_ids <- st_nearest_feature(dc_block_crimes,dc_latest[-unlist(node_near_crime),])
+# dc_block_crime_next_nearest <- dc_latest[-unlist(node_near_crime),][dc_block_crime_next_nearest_ids,]
+# dc_block_crimes$offense <- rep(d$OFFENSE,lengths(node_near_crime))
   
 register_google('AIzaSyCcwO8I6HIxfmCckS4pku_6-1N9s0ijSB4')
 home_ll <- geocode('2032 belmont rd nw washington dc')
@@ -44,22 +77,22 @@ route_no_crime$geometry <- paste0(route_no_crime$geometry$lon, ' ', route_no_cri
 route_no_crime$geometry <- (st_as_sfc(paste0("LINESTRING(",route_no_crime$geometry,")")))
 route_no_crime$geometry <- st_set_crs(route_no_crime$geometry,4326)
 
-traffic_update <- apply(cbind(dc_block_crimes$osm_id,dc_block_crime_next_nearest$osm_id),1,function(osm_ids){
-  route_match <- pmatch(osm_ids,route_no_crime$routes$legs[[1]]$annotation$nodes[[1]])
-  if(all(!is.na(route_match)) & abs(diff(route_match))==1){
-    print('found affected node pair')
-  }
-  return(c(c(osm_ids,0),c(rev(osm_ids),0)))
-})
+# traffic_update <- apply(cbind(dc_block_crimes$osm_id,dc_block_crime_next_nearest$osm_id),1,function(osm_ids){
+#   route_match <- pmatch(osm_ids,route_no_crime$routes$legs[[1]]$annotation$nodes[[1]])
+#   if(all(!is.na(route_match)) & abs(diff(route_match))==1){
+#     print('found affected node pair')
+#   }
+#   return(c(c(osm_ids,0),c(rev(osm_ids),0)))
+# })
 
-traffic_update <- t(matrix(unlist(traffic_update,recursive = F),nrow=3))
+# traffic_update <- t(matrix(unlist(traffic_update,recursive = F),nrow=3))
 
-write.table(traffic_update,'~/Documents/GitHub/safewalk/traffic_update.csv',
-            row.names = F, col.names = F,  sep=",", quote = F)
+# write.table(traffic_update,'~/Documents/GitHub/safewalk/traffic_update.csv',
+#             row.names = F, col.names = F,  sep=",", quote = F)
 
 route_no_crime_bbox <- st_bbox(route_no_crime$geometry)
-crime_lines <- st_sfc(mapply(function(a,b){st_cast(st_union(a,b),"LINESTRING")}, dc_block_crimes$geometry, dc_block_crime_next_nearest$geometry, SIMPLIFY=FALSE))
-crime_lines <- st_set_crs(crime_lines,4326)
+# crime_lines <- st_sfc(mapply(function(a,b){st_cast(st_union(a,b),"LINESTRING")}, dc_block_crimes$geometry, dc_block_crime_next_nearest$geometry, SIMPLIFY=FALSE))
+# crime_lines <- st_set_crs(crime_lines,4326)
 
 ggplot() +
   geom_sf(data = dc_osm$osm_lines,
@@ -68,10 +101,10 @@ ggplot() +
   geom_sf(data = route_no_crime$geometry,
           inherit.aes = FALSE,
           color = "blue") +
-  geom_sf(data=crime_lines,
+  geom_sf(data=dc_block_crimes_lines$geometry,
           inherit.aes = FALSE,
-          # alpha=.1,
-          aes(color = dc_block_crimes$offense)) +
+          linetype = 'dashed',
+          aes(color = dc_block_crimes_lines$offense)) +
   geom_sf(data=d$geometry,
           inherit.aes = FALSE,
           aes(color = d$OFFENSE)) +
@@ -103,15 +136,15 @@ ggplot() +
   geom_sf(data = route_post_crime$geometry,
           inherit.aes = FALSE,
           color = "orange") +
-  geom_sf(data=dc_block_crimes$geometry,
+  geom_sf(data=dc_block_crimes_lines$geometry,
           inherit.aes = FALSE,
-          alpha=.1,
-          aes(color = dc_block_crimes$offense)) +
+          linetype = 'dashed',
+          aes(color = dc_block_crimes_lines$offense)) +
   geom_sf(data=d$geometry,
           inherit.aes = FALSE,
           aes(color = d$OFFENSE)) +
-  coord_sf(xlim = route_no_crime_bbox[c(1,3)], 
-           ylim = route_no_crime_bbox[c(2,4)],
+  coord_sf(xlim = route_post_crime_bbox[c(1,3)], 
+           ylim = route_post_crime_bbox[c(2,4)],
            expand = TRUE) +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 
